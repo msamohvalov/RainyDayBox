@@ -57,8 +57,9 @@
     #define HANDLE_WM_NOTIFYICON( hwnd, wParam, lParam, fn ) \
         ((fn)((hwnd),(WPARAM)(wParam),(LPARAM)(lParam)), 1L)                                //
                                                                                             //
-    #define FORWARD_WM_NOTIFYICON( hwnd, notify, guid, pfn ) /* Проброс сообщения */ \
-        ( ((VOID ( CALLBACK *) (HWND, UINT, const GUID&))(pfn))(hwnd,notify,guid), 1L )     //
+    #define FORWARD_WM_NOTIFYICON( hwnd, notify, guid, lparam, pfn ) \
+        (( ( VOID (CALLBACK *) ( HWND, UINT, const GUID&, LPARAM ) ) (pfn) ) \
+            ( hwnd, notify, guid, lparam ), 1L )                                            //
                                                                                             //
     /*  Коллекция изображений, отображаемая значком в системном трее */ \
     #define Images( hinst,...)   TrayNotifyIcon :: ImageList ( hinst, ##__VA_ARGS__, 0L )   //
@@ -183,10 +184,11 @@
         /*  Закрытый конструктор объектов класса ( напрямую не используется ) */            //
                                                                                             //
         TrayNotifyIcon ( __in HINSTANCE hInstance, __in FARPROC pfnMsgHandler, \
-            __in __refparam const ImageList & Images, __in UINT uIconsDelayTimeout ) : \
-            m_hInstance ( hInstance), m_hWnd ( NULL ), m_pfnHandler ( pfnMsgHandler ) {     //
+            __in __refparam const ImageList & Images, __in UINT uIconsDelayTimeout, \
+                __in HMENU hContextMenu ) : m_hInstance ( hInstance), m_hWnd ( NULL ), \
+            m_pfnHandler ( pfnMsgHandler  /* ← Обработчик событий иконки */ ) {             //
                                                                                             //
-            ( m_pSyncObject = ( CRITICAL_SECTION * ) /*  Объект синхронизации … */\
+            ( m_pSyncObject = ( CRITICAL_SECTION * ) /*  Объект синхронизации … */ \
                 HeapAlloc ( RtlGetProcessHeap ( __no_args ), \
                     HEAP_ZERO_MEMORY, sizeof( CRITICAL_SECTION )) ) && \
                                                                                             //
@@ -238,6 +240,10 @@
                                                                                             //
             /*  Сохранение пользовательской иконки в именованных свойствах  */              //
             SetProp ( m_hWnd, _T("ToolTipsIcon"), hTipsIcon), 1L) && \
+                                                                                            //
+            /*  Регистрация события о добавлении главной иконки приложения … */             //
+            m_pfnHandler && ( FORWARD_WM_NOTIFYICON( m_hWnd, /*  Создание … */ \
+                WM_CREATE, iconGuid, NULL, m_pfnHandler ), 1L ) && \
                                                                                             //
             ( CreateTrayNotifyIcon  /* Добавление «главной» иконки … */ \
                 ( iconGuid, Images, uIconsDelayTimeout ));  /*  Как минимум одна … */       //
@@ -308,6 +314,43 @@
         }                                                                                   //
 
         //  ··············································································  //
+        
+        //   «Обёртка» для перехвата и обработки сообщения «WM_NOTIFY»                      //
+                                                                                            //
+        static LRESULT OnNotifyMessageOnlyWnd  /*  Только для «TTN_GETDISPINFO» … */ \
+            ( __in HWND hWnd, __in INT idFrom, __inout_opt __maybenull NMHDR * pnmhdr ) {   //
+                                                                                            //
+            TrayNotifyIcon * pAssocObj = GetWndObjAssoc ( hWnd );  /* Компаньон-объект */   //
+                                                                                            //
+            UINT uID = (UINT) (UINT_PTR) GetProp ( hWnd, _T("ToolTipsID") );  /* Индекс */  //
+                                                                                            //
+            GUID IconGuid = {0};    /*  GUID-значение для идентификатора иконки … */        //
+            PWSTR pszGuid = NULL;   /*  Строковое представление для GUID-значения */        //
+                                                                                            //
+            TCHAR chParamName[32] = {0};    /*  Название параметра для запроса GUID */      //
+                                                                                            //
+            wnsprintf ( chParamName,  /*  Представление именованного параметра … */ \
+                ARRAYSIZE( chParamName ), _T("TrayIcon%d_GUID"), uID ) > 0 && \
+                                                                                            //
+            ( pszGuid = (PWSTR) GetProp ( hWnd, chParamName ))  /*  Строка GUID … */ && \
+                SUCCEEDED( IIDFromString ( pszGuid, &IconGuid ) );  /*  GUID-значение */    //
+                                                                                            //
+            pAssocObj && pnmhdr -> code == TTN_GETDISPINFO  /*  Запрос текста … */ && \
+                                                                                            //
+            FORWARD_WM_NOTIFYICON ( hWnd, /* Проброс на пользовательский обработчик */ \
+                TTN_NEEDTEXT, IconGuid, (LPARAM) pnmhdr, pAssocObj -> m_pfnHandler ) && \
+                                                                                            //
+            ((NMTTDISPINFO *) pnmhdr) -> lParam  /*  Если передан заголовок … */ && \
+                                                                                            //
+            /*  Он будет вместе с иконкой добавлен к уведомлению … */ \
+            SNDMSG( (HWND) GetProp( pAssocObj -> m_hWnd, _T("ToolTipsHandle")), \
+                TTM_SETTITLE, (WPARAM) GetProp( pAssocObj -> m_hWnd, \
+                    _T("ToolTipsIcon")), (LPARAM) ((NMTTDISPINFO*) pnmhdr) -> lParam );     //
+                                                                                            //
+            return TRUE;  /*  Признак обработанного сообщения … */                          //
+        }                                                                                   //
+
+        //  ··············································································  //
 
         //  Вызов стороннего обработчика для сообщений трей-иконки ( WM_NOTIFYICON )        //
                                                                                             //
@@ -332,7 +375,7 @@
                                                                                             //
             PWSTR pszGuid = NULL;  /*  Строковое представление GUID-идентификатора */       //
                                                                                             //
-            pAssocObj && (  /*  Проверка доступноси компаньон-объекта … */ \
+            pAssocObj && (  /*  Проверка доступности компаньон-объекта … */ \
                                                                                             //
                 ( pAssocObj -> m_pSyncObject &&  /*  Начало блока синхронизации … */ \
                     ( EnterCriticalSection ( pAssocObj -> m_pSyncObject ), 1L ), \
@@ -347,9 +390,11 @@
                 pAssocObj -> m_pSyncObject &&  /*  Завершение блока синхронизации … */ \
                     ( LeaveCriticalSection ( pAssocObj -> m_pSyncObject ), 1L ) ), \
                                                                                             //
-                pAssocObj -> m_pfnHandler &&  /*  Вызов назначенного обработчика */ \
-                    ( FORWARD_WM_NOTIFYICON ( hWnd, Params_V4.uNotify, \
-                        Params_V4.iconGuid, pAssocObj -> m_pfnHandler ), 1L )               //
+                pAssocObj -> m_pfnHandler &&  /*  Проверка доступности обработчика … */ \
+                                                                                            //
+                /*  Вызов обработчика, назначенного пользователем … */ \
+                ( FORWARD_WM_NOTIFYICON ( hWnd, Params_V4.uNotify, Params_V4.iconGuid, \
+                    MAKELPARAM( Params_V4.x, Params_V4.y ), pAssocObj -> m_pfnHandler ))    //
             );                                                                              //
         }                                                                                   //
 
@@ -431,7 +476,9 @@
             //  последующий вызов « IUnknown :: Release » - освободит удерживаемую ссылку,  //
             //  что приведёт к вызову деструктора компаньон-объекта                         //
                                                                                             //
-            ( PostQuitMessage ( NO_ERROR ), uThisRefCount = pAssocObj -> Release(), \
+            /*  Установка кода завершения для очереди сообщений MessageOnly-окна */         //
+            ( PostQuitMessage ( (INT) (INT_PTR) GetProp ( hWnd, _T("LoopExitCode") )), \
+                uThisRefCount = pAssocObj -> Release()  /*  Освобождение ссылки */, \
                                                                                             //
             SetWndObjAssoc ( hWnd, NULL ),  /*  Сброс ассоциативного указателя */           //
                                                                                             //
@@ -446,15 +493,16 @@
         
         /*  Реализация оконной процедуры для MessageOnly-окна */                            //
                                                                                             //
-        static LRESULT CALLBACK MessageOnlyWndProc ( __in HWND hWnd, \
-            __in UINT uMsg, __in WPARAM wParam, __in LPARAM lParam ) {                      //
+        static LRESULT CALLBACK MessageOnlyWndProc \
+            ( __in HWND hWnd, __in UINT uMsg, __in WPARAM wParam, __in LPARAM lParam ) {    //
                                                                                             //
             switch ( uMsg ) {   /*  Тривиальная обработка сообщений */                      //
                                                                                             //
-                HANDLE_MSG ( hWnd, WM_CREATE, OnCreateMessageOnlyWnd );     /* CREATE */    //
-                HANDLE_MSG ( hWnd, WM_NOTIFYICON, OnNotifyShellIcon );      /* NOTIFY */    //
-                HANDLE_MSG ( hWnd, WM_TIMER, OnMessageOnlyTimer );           /* TIMER */    //
-                HANDLE_MSG ( hWnd, WM_DESTROY, OnDestroyMessageOnlyWnd );  /* DESTROY */    //
+                HANDLE_MSG ( hWnd, WM_CREATE, OnCreateMessageOnlyWnd );       /* CREATE */  //
+                HANDLE_MSG ( hWnd, WM_NOTIFYICON, OnNotifyShellIcon );   /* NOTIFY ICON */  //
+                HANDLE_MSG ( hWnd, WM_NOTIFY, OnNotifyMessageOnlyWnd );       /* NOTIFY */  //
+                HANDLE_MSG ( hWnd, WM_TIMER, OnMessageOnlyTimer );             /* TIMER */  //
+                HANDLE_MSG ( hWnd, WM_DESTROY, OnDestroyMessageOnlyWnd );    /* DESTROY */  //
             }                                                                               //
                                                                                             //
             return DefWindowProc ( hWnd, uMsg, wParam, lParam );  /* … по-умолчанию … */    //
@@ -466,20 +514,18 @@
                                                                                             //
         virtual ~TrayNotifyIcon ( __has_no_params ) {   /*  Деструктор объекта */           //
                                                                                             //
+            /*  Регистрация события об уничтожении главной иконки приложения … */           //
+            m_pfnHandler && ( FORWARD_WM_NOTIFYICON ( m_hWnd, /*  Удаление … */ \
+                WM_DESTROY, iconGuid, NULL, m_pfnHandler ), 1L);                            //
+                                                                                            //
             //  При уничтожении MessageOnly-окна - необходимо удалить все созданные им      //
             //  иконки TrayNotify + освободить все задействованные под них ресурсы          //
                                                                                             //
-            /*  Иконка, используемая для отображения в BalloonMessage  */                   //
-            HICON hBalloonIcon = (HICON) GetProp ( m_hWnd, _T("BalloonIcon") );             //
+            PTSTR pszPropNames[] = { _T("BalloonIcon"), _T("ToolTipsIcon") };               //
                                                                                             //
-            hBalloonIcon &&  /* Удаление иконки и связанного с ней свойства окна … */ \
-                ( DestroyIcon ( hBalloonIcon ), RemoveProp ( m_hWnd, _T("BalloonIcon") ));  //
-                                                                                            //
-            /*  Иконка, используемая для отображения Tooltips */                            //
-            HICON hToolTipsIcon = (HICON) GetProp ( m_hWnd, _T("ToolTipsIcon") );           //
-                                                                                            //
-            hToolTipsIcon&&  /* Удаление иконки и связанного с ней свойства окна … */ \
-                ( DestroyIcon( hToolTipsIcon ), RemoveProp( m_hWnd, _T("ToolTipsIcon") ));  //
+            for ( UINT i=0; i < ARRAYSIZE(pszPropNames);  /*  Удаление свойств … */ \
+                DestroyIcon ( (HICON) GetProp ( m_hWnd, pszPropNames[i] )), \
+                    RemoveProp ( m_hWnd, pszPropNames[i] ), i++);                           //
                                                                                             //
             UINT uIconIdx = 0;          //  Индекс поиска добавленных иконок                //
             TCHAR chParam[32] = {0};    //  Представление именованного параметра            //
@@ -495,7 +541,7 @@
                                                                                             //
                 /*  GUID-значение идентификатора значка, полученное из строки … */
                 m_hWnd && ( pszIconGuid = (PWSTR) GetProp ( m_hWnd, chParam ) ) && \
-                    SUCCEEDED ( IIDFromString(pszIconGuid, &IconGuid) ) && \
+                    SUCCEEDED ( IIDFromString ( pszIconGuid, &IconGuid )) && \
                                                                                             //
                 /* … будут освобождены - память строки GUID и список изображений … */ \
                 RemoveTrayNotifyIcon ( IconGuid )  /* Запрос на удаление значка … */, \
@@ -516,10 +562,15 @@
                                                                                             //
                 RemoveProp ( m_hWnd, chParam );  /*  Удаление «TrayIcon%d_Index» */         //
             }                                                                               //
-
-            m_hAppMutex && CloseHandle ( m_hAppMutex );
                                                                                             //
-            RemoveProp ( m_hWnd, _T("TrayItemsCounter") );  /*  Счётчик иконок */           //
+            m_hAppMutex &&  /*  Закрытие мьютекса экземпляра … */ \
+                CloseHandle ( m_hAppMutex );  /*  … если он был успешно открыт */           //
+                                                                                            //
+            //  Удаление свойств, связанных с работой MessageOnly-окна                      //
+                                                                                            //
+            RemoveProp ( m_hWnd, _T("ToolTipsHandle") ), /* Хэндл подложки … */ \
+            RemoveProp ( m_hWnd, _T("ToolTipsID") ),  /*  ID уведомления … */ \
+            RemoveProp ( m_hWnd, _T("TrayItemsCounter") );  /*  Счётчик иконок … */         //
                                                                                             //
             m_pSyncObject &&  /*  Удаление объекта синхронизации … */ \
                 HeapFree ( RtlGetProcessHeap ( __no_args ), 0, m_pSyncObject );             //
@@ -530,11 +581,11 @@
         //  Подготовка рабочего состояния MessageOnly-окна с добавлением «главного»         //
         //  значка приложения + назначение обработчика событий этого значка                 //
                                                                                             //
-        __inline static TrayNotifyIcon * CreateInstance \
-            ( __in HINSTANCE hInstance, __in FARPROC pfnMsgHandler, \
-                __in const ImageList & Images, __in UINT uIconsDelayTimeout )
+        __inline static TrayNotifyIcon * CreateInstance ( __in HINSTANCE hInstance, \
+            __in FARPROC pfnMsgHandler, __in const ImageList & Images, \
+                __in UINT uIconsDelayTimeout, __in HMENU hIconContextMenu = NULL ) \
             RETURNS ( DYNCREATE_OBJ ( TrayNotifyIcon, hInstance, pfnMsgHandler, \
-                Images, uIconsDelayTimeout));  /*  Одна обязательная иконка ! */            //
+                Images, uIconsDelayTimeout, hIconContextMenu ));  /* Главная иконка … */    //
         
         //  ··············································································  //
         
@@ -594,14 +645,14 @@
                 Shell_NotifyIcon ( NIM_SETVERSION, &nid /* V4 */ ) && \
                                                                                             //
                 /* Замена изображений на значке TrayNotify … */                             //
-                TrayNotifyChangeIconImages ( iconGuid, Images, uDelayTimeout );             //
+                TrayNotifyIconChangeImages ( iconGuid, Images, uDelayTimeout );             //
         }                                                                                   //
 
         //  ··············································································  //
 
         /*  «Переназначение» списка изображений, связанных со значком в трее */             //
                                                                                             //
-        __inline BOOL TrayNotifyChangeIconImages ( __in const GUID & iconGuid, \
+        __inline BOOL TrayNotifyIconChangeImages ( __in const GUID & iconGuid, \
             __in HIMAGELIST hImgIconsList, __in USHORT uDelayTimeout ) {                    //
                                                                                             //
             NOTIFYICONDATA nid = { 0 };   /*  Параметры изменяемой иконки */                //
@@ -681,42 +732,56 @@
         }                                                                                   //
 
         //  ··············································································  //
-
-        //  Отображение уведомления в стиле Windows XP ( BalloonToolTip )                   //
+        
+        //  Отображение  «пузырька» уведомлений ( в стиле Windows XP )                      //
                                                                                             //
-        BOOL TrayNotifyIconBalloonShow ( __in __nullterminated PTSTR pszTipTitle, \
-            __in __nullterminated PTSTR pszTipMessage ) {                                   //
+        BOOL TrayNotifyIconBalloonShow \
+            ( __in const GUID & iconGuid, __in __maybenull PTSTR pszTipTitle, \
+                __in __maybenull PTSTR pszTipMessage, __in_opt BOOLEAN fSelfClose = 0 ) {   //
                                                                                             //
             EnterCriticalSection ( m_pSyncObject );  /*  Синхронизация доступа … */         //
                                                                                             //
             /*  Хэндл окна уведомления ( «пузырь» уведомления - будет только один ) */      //
             HWND hWndToolTips = (HWND) GetProp ( m_hWnd, _T("ToolTipsHandle") );            //
                                                                                             //
+            /*  Закрытие существующего «пузырька» уведомлений … */                          //
+            hWndToolTips && TrayNotifyIconBalloonHide ( __no_args );                        //
+                                                                                            //
             TOOLINFO ti = {0};  /*  Настройка «пузырька» уведомлений */                     //
             ti.cbSize = sizeof(ti), ti.hwnd = m_hWnd, ti.uId = (UINT_PTR) m_hWnd;           //
                                                                                             //
-            hWndToolTips &&  /*  Уничтожение существующего ( если существует ) */ \
-                ( SNDMSG ( hWndToolTips, TTM_TRACKACTIVATE, 0, (LPARAM) &ti ), \
-                    SetProp ( m_hWnd, _T("ToolTipsHandle"), hWndToolTips = NULL ), \
-                SNDMSG ( hWndToolTips, TTM_TRACKACTIVATE, 0, (LPARAM) &ti ) );              //
+            NOTIFYICONIDENTIFIER niid = { sizeof(niid), /* NOTIFYICONIDENTIFIER */\
+                m_hWnd, TranslateGuid ( m_hWnd, iconGuid ), iconGuid};  /* Tray ID */       //
                                                                                             //
-            ( hWndToolTips = CreateWindowEx /*  Создание «пузырька» уведомлений … */ \
-                ( WS_EX_TOPMOST, TOOLTIPS_CLASS, NULL, WS_POPUP | TTS_NOPREFIX | \
-                TTS_BALLOON, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, \
-                    NULL, (HMENU) NULL, m_hInstance, NULL) ) && \
+            Shell_NotifyIconGetRect ( &niid, &ti.rect );  /* Прямоугольник размещения … */  //
+            SetProp ( m_hWnd, _T("ToolTipsID"), (HANDLE) (UINT_PTR) niid.uID );  /* ID */   //
+                                                                                            //
+            /*  Создание окна-подложки для «пузырька» уведомлений … */                      //
+            ( hWndToolTips = CreateWindowEx ( WS_EX_TOPMOST, TOOLTIPS_CLASS, NULL, \
+                WS_POPUP | TTS_NOPREFIX | TTS_BALLOON | ( fSelfClose ? TTS_CLOSE : 0 ), \
+                    CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, \
+                        NULL, (HMENU) NULL, m_hInstance, NULL) ) && \
                                                                                             //
             /*  Установка хранимого свойства ( хэндл «пузырька» уведомлений … )*/           //
             ( SetProp ( m_hWnd, _T("ToolTipsHandle"), hWndToolTips ), \
                                                                                             //
-            SNDMSG ( hWndToolTips, TTM_SETTITLE, /*  Назначение заголовка … */ \
+            pszTipTitle && /*  Если строка заголовка - задана пользователем … */ \
+                SNDMSG ( hWndToolTips, TTM_SETTITLE, /*  … назначение заголовка */ \
                 (WPARAM) GetProp ( m_hWnd, _T("ToolTipsIcon") ), (LPARAM) pszTipTitle ), \
                                                                                             //
             /*  Служебные флаги и текст сообщения «пузырька» */                             //
-            ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS | TTF_TRANSPARENT, \
-                ti.lpszText = pszTipMessage  /*  Cообщение для уведомления */, \
+            ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS | TTF_TRANSPARENT | TTF_TRACK, \
+                                                                                            //
+            /*  Если текст не указан - определяется Callback-вызов для его зароса */        //
+            ti.lpszText = pszTipMessage ? pszTipMessage : LPSTR_TEXTCALLBACK, \
                                                                                             //
             /*  Регистрация и отображение «пузырька» уведомлений … */                       //
             SNDMSG ( hWndToolTips, TTM_ADDTOOL, 0, (LPARAM) &ti), \
+                                                                                            //
+                SNDMSG ( hWndToolTips, TTM_TRACKPOSITION, 0,  /*  Перенос позиции … */\
+                    MAKELPARAM( ( ti.rect.left + ti.rect.right ) >> 1, ti.rect.top )), \
+                                                                                            //
+                /*  Отображение «пузырька» уведомления в заданной позиции … */              //
                 SNDMSG ( hWndToolTips, TTM_TRACKACTIVATE, 1, (LPARAM) &ti ) );              //
                                                                                             //
             LeaveCriticalSection ( m_pSyncObject );  /* Выход из блока синхронизации … */   //
@@ -738,9 +803,13 @@
             TOOLINFO ti = {0};  /*  Настройка параметров … */                               //
             ti.cbSize = sizeof(ti), ti.hwnd = m_hWnd, ti.uId = (UINT_PTR) m_hWnd;           //
                                                                                             //
-            BOOL fResult = !IsWindow(hWndToolTips) ? FALSE : /*  Проверка и закрытие */ \
+            BOOL fResult = !IsWindow ( hWndToolTips ) ? FALSE : \
+                                                                                            //
+                /*  Проверка хэндла «подложки» уведомления + его закрытие … */ \
                 ( SNDMSG (hWndToolTips, TTM_TRACKACTIVATE, 0, (LPARAM) &ti), \
-                    SetProp ( m_hWnd, _T("ToolTipsHandle"), NULL ), TRUE );                 //
+                                                                                            //
+                SetProp ( m_hWnd, _T("ToolTipsHandle"), NULL ), /* «Забой» свойств … */ \
+                    SetProp ( m_hWnd, _T("ToolTipsID"), 0 ), TRUE );                        //
                                                                                             //
             LeaveCriticalSection ( m_pSyncObject ); /*  Выход из блока синхронизации … */   //
                                                                                             //
@@ -796,7 +865,7 @@
 
         //  Запуск очереди сообщений MessageOnly-окна                                       //
                                                                                             //
-        __inline INT_PTR RunMessageOnly ( __has_no_params ) {                               //
+        __inline INT RunMessageOnly ( __has_no_params ) {                                   //
                                                                                             //
             MSG msg = { 0 };    /*  Структура, определяющая параметры сообщения */          //
                                                                                             //
@@ -804,7 +873,18 @@
                 GetMessage ( &msg, NULL, NULL, NULL );  /*  Обработка сообщений … */ \
                     TranslateMessage ( &msg ), DispatchMessage ( &msg ) );                  //
                                                                                             //
-            return (INT_PTR) msg.wParam;  /*  Установленное возвращаемое значение */        //
+            return (INT) msg.wParam;    /*  Установленное возвращаемое значение */          //
+        }                                                                                   //
+
+        //  ∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙  //
+
+        //  Завершение очереди сообщений MessageOnly-окна                                   //
+                                                                                            //
+        __inline VOID DestroyMessageOnly ( __in INT nExitCode ) {                           //
+                                                                                            //
+            /*  Установка переданного кода завершения для MessageOnly-окна */               //
+            SetProp ( m_hWnd, _T("LoopExitCode"), (HANDLE) (INT_PTR) nExitCode );           //
+            DestroyWindow ( m_hWnd );   /*  Завершение очереди сообщений */                 //
         }                                                                                   //
             
         //  ‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡‡  //
