@@ -61,11 +61,12 @@
         (( ( VOID (CALLBACK *) ( HWND, UINT, const GUID&, LPARAM ) ) (pfn) ) \
             ( hwnd, notify, guid, lparam ), 1L )                                            //
                                                                                             //
-    /*  Коллекция изображений, отображаемая значком в системном трее */ \
-    #define Images( hinst,...)   TrayNotifyIcon :: ImageList ( hinst, ##__VA_ARGS__, 0L )   //
 
     //  ∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙  //
 
+    #define UsingImages( hinst,...) /*  Коллекция изображений для реализации GUI */ \
+        TrayNotifyIcon :: ImageList ( hinst, ##__VA_ARGS__, 0L )                            //
+                                                                                            //
     //  Класс-обёртка - реализует запуск приложения без его графической визуализации        //
     //  ( создания главного окна приложения ), предоставляет функционал добавления и        //
     //  управления иконкой приложения в системном трее, обеспечивая цикл его «жизни»        //
@@ -90,16 +91,12 @@
                                                                                             //
                 va_end ( args );  /*  Завершение списка аргументов */                       //
             }                                                                               //
-
-            //  ··········································································  //
-
+                                                                                            //
             ~ImageList ( __has_no_params ) {  /*  Деструктор объектов класса */             //
                                                                                             //
                 ImageList_Destroy ( hImageList );  /*  Удаление списка изображений */       //
             }                                                                               //
-
-            //  ··········································································  //
-
+                                                                                            //
             operator HIMAGELIST () const  /* Оператор приведения типа «HIMAGELIST» */ \
                 RETURNS( ImageList_Duplicate ( hImageList ) );  /* Дубликат ! */            //
 
@@ -146,7 +143,7 @@
                                                                                             //
                 ICONINFO ii = {0}; BITMAP bm = {0};  /*  Информационные структуры … */      //
                                                                                             //
-                return GetIconInfo ( hIcon, &ii ) &&  /*  Запрос параметров … */\
+                return GetIconInfo ( hIcon, &ii ) &&  /*  Запрос параметров … */ \
                     GetObject ( ii.hbmMask, sizeof(bm), &bm ) == sizeof ( bm ), \
                                                                                             //
                 ii.hbmMask && DeleteObject ( ii.hbmMask ), /* Удаление служебных … */ \
@@ -155,6 +152,124 @@
                 /*  Возвращаются установленные размеры иконки … */                          //
                 SIZE { bm.bmWidth, ii.hbmColor ? bm.bmHeight : bm.bmHeight >> 1 };          //
             }                                                                               //
+        };                                                                                  //
+
+        //  ∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙  //
+
+        //  Построение контекстного меню для значка в области уведомлений                   //
+                                                                                            //
+        #define CtxMenu(...)  /*  Представление контекстного меню */ \
+            TrayNotifyIcon :: PopupMenu( ##__VA_ARGS__ , NULL )                             //
+                                                                                            //
+        #define SubMenu(...)  /*  Подменю во вложенном контекстном */ \
+            TrayNotifyIcon :: PopupMenu( ##__VA_ARGS__ , NULL )                             //
+
+        #define SubMenuWithIcon(icon, ...)  /*  Подменю во вложенном контекстном */ \
+            TrayNotifyIcon :: PopupMenu( ##__VA_ARGS__ , NULL ).SetIcon(icon)               //
+                                                                                            //
+        #define Item(...)  /*  Элемент меню */ \
+            TrayNotifyIcon :: MenuItem( ##__VA_ARGS__ )                                     //
+                                                                                            //
+        struct MenuItem {   /*  Абстракция «Элемент контекстного меню» */                   //
+                                                                                            //
+            private : /*  Закрытые свойства и методы класса */                              //
+                                                                                            //
+            PTSTR m_pszText;    /*  Строка представления элемента меню */                   //
+            USHORT m_uImage;    /*  Номер картинки из списка IMAGELIST */                   //
+            UINT m_uID;         /*  Идентификатор элемента меню */                          //
+            UINT m_fState;      /*  Флаги состояния элемента меню */                        //
+                                                                                            //
+            public :  /*  Открытые свойства и методы класса */                              //
+                                                                                            //
+            __inline MenuItem ( __in UINT uID, __in USHORT uImage, \
+                __in __nullterminated PTSTR pszText, __in_opt UINT fState = 0 ) \
+                                                                                            //
+                APPLY ( m_pszText = pszText; /* Инициализация полей структуры */ \
+                    m_uID = uID; m_uImage = uImage; m_fState = fState );                    //
+                                                                                            //
+            operator PTSTR () const YIELD( m_pszText );  /*  Строка представления … */      //
+            operator USHORT () const YIELD( m_uImage );  /*  Номер картинки из списка */    //
+            operator UINT () const YIELD( m_uID );       /*  Идентификатор элемента */      //
+            operator DWORD () const YIELD( m_fState );   /*  Флаги состояния элемента */    //
+        };                                                                                  //
+
+        //  ··············································································  //
+        
+        struct PopupMenu {  /*  Абстракция «Контекстное меню» или «Элемент подменю» … */    //
+                                                                                            //
+            private:  /*  Закрытые свойства и методы класса */                              //
+                                                                                            //
+            HMENU m_hMenu;      /*  Хэндл родительского меню ( для подменю ) */             //
+            PTSTR m_pszName;    /*  Строка представления элемента ( текст ) */              //
+            USHORT m_uImage;    /*  Номер картинки из списка IMAGELIST */                   //
+                                                                                            //
+            public:   /*  Открытые свойства и методы класса */                              //
+                                                                                            //
+            //  «hVariated» - вариативный параметр, если это «HIMAGELIST» - предполагается  //
+            //  создание контекстного меню, если это «PTSTR» - создаётся элемент подменю    //
+            //  для данного контекстного, а строка - обозначает его представление           //
+                                                                                            //
+            PopupMenu( HANDLE hVariated, ... ) :  m_pszName ( NULL ) /*  Название */ , \
+                m_uImage ( -1 ) /* Иконка */, m_hMenu ( CreatePopupMenu() ) /* Хэндл */ {   //
+                                                                                            //
+                va_list Args;   /*  Маркер вариадических параметров конструктора */         //
+                va_start ( Args, hVariated );   /*  Инициализация маркера параметров */     //
+                                                                                            //
+                BOOL fHandleIsImage = FALSE;    /*  Параметр - хэндл списка иконок */       //
+                BOOL fHandleIsString = FALSE;   /*  Параметр - строка представления */      //
+                                                                                            //
+                fHandleIsImage = hVariated == NULL ||  /*  Проверка HIMAGELIST … */ \
+                    ImageList_Destroy ( ImageList_Duplicate( (HIMAGELIST) hVariated ));     //
+                                                                                            //
+                fHandleIsString = !fHandleIsImage &&  /*  Проверка PTSTR … */ \
+                    !IsBadStringPtr ( (PTSTR) hVariated, lstrlen( (PTSTR) hVariated ));     //
+                                                                                            //
+                fHandleIsString &&  /*  Представленная строка - сохраняется как … */ \
+                    ( m_pszName = (PTSTR) hVariated );  /* … представление элемента */      //
+                                                                                            //
+                MENUINFO mi = { sizeof(mi), /* Параметры подложки контекстного меню … */ \
+                    MIM_MENUDATA, 0, 0, NULL, 0, (ULONG_PTR) hVariated /* HIMAGELIST */ };  //
+                                                                                            //
+                fHandleIsImage && SetMenuInfo ( m_hMenu, &mi );  /*  Связывание … */        //
+                                                                                            //
+                MENUITEMINFO mii = { sizeof(mii), /*  Шаблон состояния элемента меню … */ \
+                    MIIM_STRING | MIIM_BITMAP | MIIM_ID | MIIM_FTYPE | MIIM_DATA, \
+                    MFT_STRING, 0, 0, NULL, NULL, NULL, 0, NULL, 0, HBMMENU_CALLBACK };     //
+                                                                                            //
+                MENUINFO dummy = { sizeof(dummy), MIM_STYLE };  /* Для проверки HMENU … */  //
+                                                                                            //
+                for ( PVOID pVariadic = NULL; /*  Обход вариадических параметров … */ \
+                    pVariadic = va_arg( Args, PVOID ) /*  … пока не встречен «NULL» */; \
+                                                                                            //
+                (( SetLastError ( NOERROR ), 1L ) &&  /* Проверка представления … */ \
+                    GetMenuInfo( (HMENU) * (PopupMenu*) pVariadic, &dummy) && \
+                GetLastError() != ERROR_INVALID_MENU_HANDLE ) &&  /*  Это HMENU … */ \
+                                                                                            //
+                ( mii.fMask |= MIIM_SUBMENU, mii.fMask &= ~MIIM_STATE, /* Подменю … */ \
+                    mii.dwTypeData = (PTSTR) * (PopupMenu *) pVariadic /* Текст */ , \
+                mii.dwItemData = (USHORT) * (PopupMenu *)pVariadic /* Номер иконки */, \
+                    mii.hSubMenu = (HMENU) * (PopupMenu *) pVariadic /* Хэндл меню */ , \
+                mii.wID = 0  /* Пункты, являющиеся подменю - не имеют ID */, 1L ) || \
+                                                                                            //
+                ( mii.fMask &= ~MIIM_SUBMENU, mii.fMask |= MIIM_STATE, /* Элемент … */ \
+                    mii.wID = (UINT) * (MenuItem *) pVariadic  /* Код элемента */, \
+                mii.dwItemData = (USHORT) * (MenuItem *) pVariadic /* Номер иконки */, \
+                    mii.dwTypeData = (PTSTR) * (MenuItem *) pVariadic /* Текст … */, \
+                mii.fState = (UINT) (DWORD) * (MenuItem *) pVariadic, 1L ), \
+                                                                                            //
+                mii.cch = lstrlen(mii.dwTypeData)  /* Длина строки представления */, \
+                                                                                            //
+                InsertMenuItem ( m_hMenu, 0, TRUE, &mii) );  /* Вставка элемента … */       //
+                                                                                            //
+                va_end( Args );  /*  Конец маркера вариадических параметров */              //
+            };                                                                              //
+
+            __inline const PopupMenu & SetIcon ( __in USHORT uImage ) \
+                APPLY( m_uImage = uImage; RETURNS(*this) );
+                                                                                            //
+            operator HMENU () const YIELD( m_hMenu );     /* Хэндл данного меню */          //
+            operator PTSTR () const YIELD( m_pszName );   /* Строка его представления */    //
+            operator USHORT () const YIELD( m_uImage );   /* Номер картинки из списка */    //
         };                                                                                  //
 
         //  ∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙∙  //
@@ -170,23 +285,22 @@
         HANDLE m_hAppMutex;     //  Хендл уникального мьютекса экземпляра                   //
                                                                                             //
         HWND m_hWnd;    //  Дескриптор связанного MessageOnly-окна                          //
+        HMENU m_hMenu;  //  Дескриптор контекстного меню TrayNotify-значка                  //
         GUID iconGuid;  //  Идентификатор «главной» иконки приложения                       //
                                                                                             //
         FARPROC m_pfnHandler;   //  Пользовательский обработчик сообщений                   //
                                                                                             //
         CRITICAL_SECTION * m_pSyncObject;   /*  Объект синхронизации доступа */             //
-                                                                                            //
-        /*  Идентификатор уникальности ( имя мьютекса для проверки экземпляра )*/           //
-        const PTSTR pszUnique = _T("{7169521D-5243-42FE-92A3-F0520D285490}");               //
 
         //  ··············································································  //
         
         /*  Закрытый конструктор объектов класса ( напрямую не используется ) */            //
                                                                                             //
         TrayNotifyIcon ( __in HINSTANCE hInstance, __in FARPROC pfnMsgHandler, \
-            __in __refparam const ImageList & Images, __in UINT uIconsDelayTimeout, \
-                __in HMENU hContextMenu ) : m_hInstance ( hInstance), m_hWnd ( NULL ), \
-            m_pfnHandler ( pfnMsgHandler  /* ← Обработчик событий иконки */ ) {             //
+            __in __nullterminated PTSTR pszUnique, __in const ImageList & Images, \
+                __in UINT uIconsDelayTimeout, __in HMENU hContextMenu ) : \
+            m_hWnd ( NULL ), m_hMenu ( hContextMenu ), m_hInstance ( hInstance ), \
+                /* Обработчик событий значка */ m_pfnHandler ( pfnMsgHandler ) {            //
                                                                                             //
             ( m_pSyncObject = ( CRITICAL_SECTION * ) /*  Объект синхронизации … */ \
                 HeapAlloc ( RtlGetProcessHeap ( __no_args ), \
@@ -203,6 +317,11 @@
             WNDCLASSEX wc = { 0 };    /*  Структура WinAPI с описанием класса окна */       //
             HICON hBalloonIcon = NULL;  /*  Хэндл значка, для BalloonMessage */             //
             HICON hTipsIcon = NULL;     /*  Хэндл значка, для ToolTips */                   //
+                                                                                            //
+            SetLastError ( NOERROR );   /*  Сброс состояния последней ошибки */             //
+                                                                                            //
+            MENUINFO mi = { sizeof(mi), MIM_MENUDATA, 0, 0, NULL, 0, NULL };                //
+            GetMenuInfo ( hContextMenu, &mi );  /* Запрос списка иконок для меню */         //
                                                                                             //
             /*  Допускается запуск - только одного единственного экземпляра приложения */   //
             ( m_hAppMutex = CreateMutex ( NULL, TRUE, pszUnique ) /* Проверка … */ ) && \
@@ -226,6 +345,9 @@
             ( m_hWnd = CreateWindowEx /*  Создание MessageOnly-окна … */ \
                 ( 0, wc.lpszClassName, NULL, 0, 0, 0, 0, 0, HWND_MESSAGE, NULL, NULL, \
                     (PVOID) this /*  Экземпляр объекта связывается с окном */ )) && \
+                                                                                            //
+            ( SetProp ( m_hWnd, /*  Хэндл изображений для контекстного меню */ \
+                _T("ContextMenu_ImageList"), (HANDLE) mi.dwMenuData ), 1L ) && \
                                                                                             //
             /*  Загрузка пользовательской иконки, отображаемой в BalloonMessage */          //
             ( SUCCEEDED( LoadIconWithScaleDown ( m_hInstance /* … c масштабированием */, \
@@ -392,10 +514,81 @@
                                                                                             //
                 pAssocObj -> m_pfnHandler &&  /*  Проверка доступности обработчика … */ \
                                                                                             //
-                /*  Вызов обработчика, назначенного пользователем … */ \
+                ( Params_V4.uNotify == WM_CONTEXTMENU  /*  Вызов контекстного меню … */ && \
+                    pAssocObj -> m_hMenu != NULL  /*  … если меню уже создано … */ && \
+                                                                                            //
+                ( OnMessageOnlyContextMenu ( hWnd,  /*  Стандартное открытие меню … */ \
+                    pAssocObj -> m_hMenu, Params_V4.x, Params_V4.y ), 1L ) || \
+                                                                                            //
+                /*  В остальных ситуациях - вызов пользовательского обработчика … */ \
                 ( FORWARD_WM_NOTIFYICON ( hWnd, Params_V4.uNotify, Params_V4.iconGuid, \
-                    MAKELPARAM( Params_V4.x, Params_V4.y ), pAssocObj -> m_pfnHandler ))    //
+                    MAKELPARAM( Params_V4.x, Params_V4.y ), pAssocObj -> m_pfnHandler )) )  //
             );                                                                              //
+        }                                                                                   //
+
+        //  ··············································································  //
+
+        //  Стандартное раскрытие всплывающего контекстного меню для значка                 //
+                                                                                            //
+        __inline static VOID OnMessageOnlyContextMenu \
+            ( __in HWND hWnd, __in HMENU hContextMenu, __in UINT xPos, __in UINT yPos ) {   //
+                                                                                            //
+            SetForegroundWindow ( hWnd ),  /*  Отображение Popup-меню … */ \
+                TrackPopupMenu ( hContextMenu, 0, xPos, yPos, 0, hWnd, NULL );              //
+        }                                                                                   //
+
+        //  ··············································································  //
+
+        //  Запрос размерности элементов для осуществления OwnerDraw-операций               //
+                                                                                            //
+        static VOID OnMessageOnlyMeasure \
+            ( __in HWND hWnd, __in __refparam MEASUREITEMSTRUCT * lpMeasureItem ) {         //
+                                                                                            //
+            HANDLE hImageList = NULL;     /*  Список иконок контекстного меню */            //
+            INT cxIcon = 0, cyIcon = 0;   /*  Размерности иконок - ширина, высота */        //
+                                                                                            //
+            /*  Проверка и запрос списка иконок контекстного меню … */ \
+            lpMeasureItem && lpMeasureItem -> CtlType == ODT_MENU /* Меню … */ && \
+                ( hImageList = GetProp ( hWnd, _T("ContextMenu_ImageList") )) && \
+                                                                                            //
+            /*  Запрос размерности иконок для пунктов контекстного меню */ \
+            ImageList_GetIconSize ( (HIMAGELIST) hImageList, &cxIcon, &cyIcon) && \
+                                                                                            //
+            //  Размерности иконок выбираются с учётом возможного Check-маркера             //
+                                                                                            //
+            ( lpMeasureItem -> itemWidth = /* Дополнение к ширине иконки */ \
+                    cxIcon - GetSystemMetrics ( SM_CXMENUCHECK ) + 6, \
+                                                                                            //
+                lpMeasureItem -> itemHeight = cyIcon + 2 /* Точная высота иконки */ );      //
+        }                                                                                   //
+
+        //  ··············································································  //
+
+        //  Непосредственное осуществление OwnerDraw-операций                               //
+                                                                                            //
+        static VOID OnMessageOnlyDraw ( __in HWND hWnd, \
+            __in __refparam const DRAWITEMSTRUCT * lpDrawItem ) {                           //
+                                                                                            //
+            HANDLE hImageList = NULL;     /*  Список иконок контекстного меню */            //
+            HICON hDrawIcon = NULL;       /*  Хэндл отображаемой иконки */                  //
+            INT cxIcon = 0, cyIcon = 0;   /*  Размерности иконок - ширина, высота */        //
+                                                                                            //
+            /*  Проверка и запрос списка иконок контекстного меню … */ \
+            lpDrawItem && lpDrawItem -> CtlType == ODT_MENU && \
+                !( lpDrawItem -> itemState & ODS_CHECKED ) /* … без Check-маркера */ && \
+                    ( hImageList = GetProp ( hWnd, _T("ContextMenu_ImageList") )) && \
+                                                                                            //
+            /*  Запрос хэндла актуальной иконки для прорисовки пункта меню */ \
+            ( hDrawIcon = ImageList_GetIcon ( (HIMAGELIST) hImageList, \
+                (INT) lpDrawItem -> itemData, ILD_IMAGE | ILD_TRANSPARENT ) ) && \
+                                                                                            //
+            /*  Получение размерности отображаемой иконки ( ширина и высота ) … */ \
+            ( ImageList_GetIconSize ( (HIMAGELIST) hImageList, &cxIcon, &cyIcon) ) && \
+                                                                                            //
+            /*  Прорисовка иконки в активном или Disabled-состоянии … */ \
+            DrawState ( lpDrawItem -> hDC, (HBRUSH) ( COLOR_GRAYTEXT + 1 ), \
+                NULL, (LPARAM) hDrawIcon, NULL, 2, 2, cxIcon, cyIcon, DST_ICON | \
+                    ( lpDrawItem -> itemState & ODS_DISABLED ? DSS_MONO : DSS_NORMAL ));    //
         }                                                                                   //
 
         //  ··············································································  //
@@ -501,6 +694,8 @@
                 HANDLE_MSG ( hWnd, WM_CREATE, OnCreateMessageOnlyWnd );       /* CREATE */  //
                 HANDLE_MSG ( hWnd, WM_NOTIFYICON, OnNotifyShellIcon );   /* NOTIFY ICON */  //
                 HANDLE_MSG ( hWnd, WM_NOTIFY, OnNotifyMessageOnlyWnd );       /* NOTIFY */  //
+                HANDLE_MSG ( hWnd, WM_MEASUREITEM, OnMessageOnlyMeasure );   /* MEASURE */  //
+                HANDLE_MSG ( hWnd, WM_DRAWITEM, OnMessageOnlyDraw );            /* DRAW */  //
                 HANDLE_MSG ( hWnd, WM_TIMER, OnMessageOnlyTimer );             /* TIMER */  //
                 HANDLE_MSG ( hWnd, WM_DESTROY, OnDestroyMessageOnlyWnd );    /* DESTROY */  //
             }                                                                               //
@@ -527,6 +722,13 @@
                 DestroyIcon ( (HICON) GetProp ( m_hWnd, pszPropNames[i] )), \
                     RemoveProp ( m_hWnd, pszPropNames[i] ), i++);                           //
                                                                                             //
+            HIMAGELIST hCtxMenuImgList =  /* Список иконок контекстного меню */ \
+                (HIMAGELIST) GetProp ( m_hWnd, _T("ContextMenu_ImageList") );               //
+                                                                                            //
+            /*  Уничтожение списка иконок контекстного меню … */ \
+            hCtxMenuImgList && ImageList_Destroy ( hCtxMenuImgList ) && \
+                RemoveProp ( m_hWnd, _T("ContextMenu_ImageList") );                         //
+                                                                                            //
             UINT uIconIdx = 0;          //  Индекс поиска добавленных иконок                //
             TCHAR chParam[32] = {0};    //  Представление именованного параметра            //
             PWSTR pszIconGuid = NULL;   //  Строковое представление GUID-иконки             //
@@ -539,7 +741,7 @@
                 wnsprintf ( chParam,  /*  Строка GUID-идентификатора значка … */ \
                     ARRAYSIZE( chParam ), _T("TrayIcon%d_GUID"), uIconIdx ) > 0 && \
                                                                                             //
-                /*  GUID-значение идентификатора значка, полученное из строки … */
+                /*  GUID-значение идентификатора значка, полученное из строки … */ \
                 m_hWnd && ( pszIconGuid = (PWSTR) GetProp ( m_hWnd, chParam ) ) && \
                     SUCCEEDED ( IIDFromString ( pszIconGuid, &IconGuid )) && \
                                                                                             //
@@ -552,13 +754,13 @@
                                                                                             //
                 RemoveProp ( m_hWnd, chParam );  /*  Удаление «TrayIcon%d_GUID» */          //
                                                                                             //
-                wnsprintf(chParam,  /*  Хранимый хендл коллекции изображений … */ \
-                    ARRAYSIZE(chParam), _T("TrayIcon%d_ImageList"), uIconIdx) > 0 && \
+                wnsprintf ( chParam,  /*  Хранимый хендл коллекции изображений … */ \
+                    ARRAYSIZE( chParam ), _T("TrayIcon%d_ImageList"), uIconIdx) > 0 && \
                                                                                             //
                 RemoveProp ( m_hWnd, chParam );  /*  Удаление «TrayIcon%d_ImageList» */     //
                                                                                             //
-                wnsprintf(chParam,  /*  Индекс отображаемого значка … */ \
-                    ARRAYSIZE(chParam), _T("TrayIcon%d_Index"), uIconIdx) > 0 && \
+                wnsprintf ( chParam,  /*  Индекс отображаемого значка … */ \
+                    ARRAYSIZE( chParam ), _T("TrayIcon%d_Index"), uIconIdx) > 0 && \
                                                                                             //
                 RemoveProp ( m_hWnd, chParam );  /*  Удаление «TrayIcon%d_Index» */         //
             }                                                                               //
@@ -581,11 +783,14 @@
         //  Подготовка рабочего состояния MessageOnly-окна с добавлением «главного»         //
         //  значка приложения + назначение обработчика событий этого значка                 //
                                                                                             //
-        __inline static TrayNotifyIcon * CreateInstance ( __in HINSTANCE hInstance, \
-            __in FARPROC pfnMsgHandler, __in const ImageList & Images, \
-                __in UINT uIconsDelayTimeout, __in HMENU hIconContextMenu = NULL ) \
+        __inline static TrayNotifyIcon * CreateInstance \
+            ( __in HINSTANCE hInstance, __in __nullterminated PTSTR pszUnique, \
+                __in FARPROC pfnMsgHandler, __in const ImageList & Images, \
+            __in UINT uIconsDelayTimeout, __in HMENU hIconContextMenu = NULL ) \
+                                                                                            //
+            /*  Добавление «главной» иконки приложения … */ \
             RETURNS ( DYNCREATE_OBJ ( TrayNotifyIcon, hInstance, pfnMsgHandler, \
-                Images, uIconsDelayTimeout, hIconContextMenu ));  /* Главная иконка … */    //
+                pszUnique, Images, uIconsDelayTimeout, hIconContextMenu ));                 //
         
         //  ··············································································  //
         
@@ -614,8 +819,6 @@
             nid.guidItem = iconGuid;    /*  GUID-идентификатор иконки */                    //
                                                                                             //
             nid.uCallbackMessage = WM_NOTIFYICON;   /*  Идентификатор уведомлений */        //
-                                                                                            //
-            LoadIconMetric ( m_hInstance, _T("Asterisk"), LIM_SMALL, &nid.hIcon );          //
                                                                                             //
             lstrcpy( nid.szTip, _T("DummyText"));  /*  Для Tips-уведомлений … */            //
                                                                                             //
